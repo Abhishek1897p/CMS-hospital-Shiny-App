@@ -1,0 +1,819 @@
+---
+title: "Final project"
+author: "Abhishek D Pawar"
+date: "1/07/2021"
+output: html_document
+runtime: shiny
+---
+# variable
+```{r}
+#  Variable name dictionary 
+        
+# hgi -> Hospital General Information
+# cad -> Complications and Death
+# hai -> Healthcare associated infection
+# mhs -> Medical Hospital spending per patient
+# oie -> Outpatient Imaging Efficiency
+# pvc -> Payment and Value of Care 
+# tec -> Timely and effective Care
+# hcahps -> Hospital Consumer Assessment of Healthcare Providers and Systems Patient Survey
+
+      # files extension meaning
+# _pivot -> pivot table between Facility id and measure id
+# _pivot1 -> total average score for each measure is calculated here
+# _pivot2 -> provide hospital's general info to measure groups (using facility ID)
+# _agg -> Aggregate table by mean for each measure (mean for each Hospital rating)
+# _uni -> unique measure id and measure name table for each measure
+
+```
+
+
+```{r, include=FALSE}
+#please set working directory as per the location of data on your pc
+#setwd('C:/Users/abhis/Desktop/Masters/masters sem 2/Data analysis using r/term project/data')
+```
+
+```{r, include=FALSE}
+library(psych)
+library(pander)
+library(ggpubr)
+library(knitr)
+library(tidyr)
+library(dplyr)
+library(readr)
+library(emmeans)
+library(citr)
+library(reshape2)
+library(imputeMissings)
+
+```
+
+```{r}
+# these are global options which apply to pandoc functions 
+
+# comment to show after a table is split by column
+panderOptions('table.continues', '')              
+
+# this is to control how many characters can be printed in a line 
+panderOptions('table.split.table', 140)                                          
+```
+
+# Hospital_General_Information
+
+```{r}
+hgi <- read.csv('Hospital_General_Information.csv')
+
+hgi[ hgi == "Not Available" ] <- NA
+```
+
+```{r}
+hgi <- hgi %>% select(-contains("footnote"))
+
+hgi <- hgi %>% select(-contains("Count"))
+```
+
+
+```{r}
+
+# Let's thus subset the data to only the acute care hospitals
+
+hgi <- filter(hgi, Hospital.Type == "Acute Care Hospitals")
+hgi$Hospital.Type <- factor(as.character(hgi$Hospital.Type))
+#table(hgi$Hospital.Type, hgi$Hospital.overall.rating)
+```
+
+
+```{r}
+# Overall rating
+
+hgi$Hospital.overall.rating <- as.numeric(hgi$Hospital.overall.rating)
+```
+
+```{r}
+pandoc.table(head(hgi,5))
+```
+
+
+```{r}
+ggplot(data = hgi, aes(x = Hospital.overall.rating)) + geom_histogram(binwidth = 0.5)
+```
+
+
+#below fuction are used to normalise the data
+
+```{r}
+normalize <- function(x, na.rm = TRUE) {
+    return((x- min(x)) /(max(x)-min(x)))
+}
+```
+
+```{r}
+normalize_mean <- function(x, na.rm = TRUE) {
+    return(abs(x- mean(x))/sd(x))
+}
+```
+
+```{r}
+normalize_log <- function(x, na.rm = TRUE) {
+    return(abs(log(x)))
+}
+```
+
+
+# Timely_and_Effective_Care
+
+```{r}
+# Import data from .CSV file
+
+tec <- read.csv('Timely_and_Effective_Care-Hospital.csv')
+
+pandoc.table(head(tec, 5))
+```
+Structure of TEC
+```{r}
+str(tec)
+```
+
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+tec_pivot <- dcast(tec, Facility.ID ~ Measure.ID, value.var="Score")
+
+tec_pivot <- tec_pivot %>% select(-contains("EDV"))
+
+pandoc.table(head(tec_pivot,5))
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+tec_pivot[ tec_pivot == "Not Available" ] <- NA
+tec_pivot[ tec_pivot == "Not Applicable"] <- NA
+tec_pivot[,-c(1)] <- sapply(tec_pivot[,-c(1)],as.numeric)
+#sapply(tec_pivot, function(x) (sum(is.na(x))*100)/nrow(tec_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+tec_pivot1 <- impute(tec_pivot, method = "median/mode")
+```
+
+Here we find the total average score for TEC measures
+```{r} 
+tec_pivot1$'TnEC - Avg Score' <- rowSums( tec_pivot1[,2:17] )/ ncol( tec_pivot1[,2:17])
+
+pandoc.table(head(tec_pivot1,5))
+```
+
+Merge TEC with HGI to provide hospital's general info to TEC
+```{r}
+tec_pivot2 <- merge(tec_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(tec_pivot2,5))
+```
+Generate Aggregate table for TEC by Hospital overall rating
+```{r}
+tec_agg <- aggregate(tec_pivot2[,2:18], list(Hospital.overall.rating = tec_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(tec_agg,5))
+```
+Generate unique measure id and measure name table for TEC
+```{r}
+
+tec_uni <- tec[!duplicated(t(apply(tec[,c(10,11)], 1, sort))),][,c(10,11)]
+pandoc.table(tec_uni[-1,])
+```
+
+
+
+# Payment_and_Value_of_Care
+
+```{r}
+# Import data from .CSV file
+
+pvc <- read.csv('Payment_and_Value_of_Care-Hospital.csv')
+#head(tec)
+pandoc.table(head(pvc, 5))
+```
+
+Structure of PVC
+```{r}
+str(pvc)
+```
+
+```{r}
+pandoc.table(head(dcast(pvc, Facility.ID ~ Payment.Measure.ID, value.var="Payment"),5))
+```
+
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+pvc_pivot <- dcast(pvc, Facility.ID ~ Payment.Measure.ID, value.var="Payment")
+
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+pvc_pivot[ pvc_pivot == "Not Available" ] <- NA
+pvc_pivot[ pvc_pivot == "Not Applicable"] <- NA
+```
+
+
+Handling currency data so that it can be converted to numeric data
+```{r}
+
+pvc_pivot$PAYM_30_AMI<-gsub("\\$","",pvc_pivot$PAYM_30_AMI)
+
+pvc_pivot$PAYM_30_HF<-gsub("\\$","",pvc_pivot$PAYM_30_HF)
+
+pvc_pivot$PAYM_30_PN<-gsub("\\$","",pvc_pivot$PAYM_30_PN)
+
+pvc_pivot$PAYM_90_HIP_KNEE<-gsub("\\$","",pvc_pivot$PAYM_90_HIP_KNEE)
+
+pvc_pivot$PAYM_30_AMI<-gsub(",","",pvc_pivot$PAYM_30_AMI)
+
+pvc_pivot$PAYM_30_HF<-gsub(",","",pvc_pivot$PAYM_30_HF)
+
+pvc_pivot$PAYM_30_PN<-gsub(",","",pvc_pivot$PAYM_30_PN)
+
+pvc_pivot$PAYM_90_HIP_KNEE<-gsub(",","",pvc_pivot$PAYM_90_HIP_KNEE)
+
+
+pvc_pivot[,-c(1)] <- sapply(pvc_pivot[,-c(1)],as.numeric)
+
+pvc_pivot1 <- impute(pvc_pivot, method = "median/mode")
+```
+
+Here we find the average score for PVC measures
+```{r}
+pvc_pivot1$'PVC - Avg Score' <- rowSums( pvc_pivot1[,2:5] )/ ncol( pvc_pivot1[,2:5])
+
+pandoc.table(head(pvc_pivot1,5))
+```
+
+
+Merge PVC with HGI to provide hospital's general info to it
+```{r}
+pvc_pivot2 <- merge(pvc_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(pvc_pivot2,5))
+```
+
+Generate Aggregate table for PVC by Hospital overall rating
+```{r}
+pvc_agg <- aggregate(pvc_pivot2[,2:6], list(Hospital.overall.rating = pvc_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(pvc_agg,5))
+```
+
+Generate unique measure id and measure name table for PVC
+```{r}
+
+pvc_uni <- pvc[!duplicated(t(apply(pvc[,c(9,10)], 1, sort))),][,c(9,10)]
+pandoc.table(pvc_uni)
+```
+
+
+# Outpatient_Imaging_Efficiency
+
+```{r}
+# Import data from .CSV file
+oie <- read.csv('Outpatient_Imaging_Efficiency-Hospital.csv')
+#head(tec)
+pandoc.table(head(oie, 5))
+```
+Structure of OIE
+```{r}
+str(oie)
+```
+
+```{r}
+
+pandoc.table(head(dcast(oie, Facility.ID ~ Measure.ID, value.var="Score"),5))
+```
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+oie_pivot <- dcast(oie, Facility.ID ~ Measure.ID, value.var="Score")
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+oie_pivot[ oie_pivot == "Not Available" ] <- NA
+oie_pivot[ oie_pivot == "Not Applicable"] <- NA
+
+#sapply(oie_pivot, function(x) (sum(is.na(x))*100)/nrow(oie_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+oie_pivot[,-c(1)] <- sapply(oie_pivot[,-c(1)],as.numeric)
+
+oie_pivot1 <- impute(oie_pivot, method = "median/mode")
+```
+
+Here we find the total average score for OIE measures
+```{r}
+oie_pivot1$'OIE - Avg Score' <- rowSums( oie_pivot1[,2:4] )/ ncol(oie_pivot1[,2:4])
+
+pandoc.table(head(oie_pivot1,5))
+```
+
+Merge OIE with HGI to provide hospital's general info to OIE
+```{r}
+oie_pivot2 <- merge(oie_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(oie_pivot2,5))
+```
+
+Generate Aggregate table for OIE by Hospital overall rating
+```{r}
+oie_agg <- aggregate(oie_pivot2[,2:5], list(Hospital.overall.rating = oie_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(oie_agg,5))
+```
+
+Generate unique measure id and measure name table for OIE
+```{r}
+
+oie_uni <- oie[!duplicated(t(apply(oie[,c(9,10)], 1, sort))),][,c(9,10)]
+pandoc.table(oie_uni)
+```
+
+# Medicare_Hospital_Spending_Per_Patient
+
+```{r}
+# Import data from .CSV file
+mhs <- read.csv('Medicare_Hospital_Spending_Per_Patient-Hospital.csv')
+#head(tec)
+pandoc.table(head(mhs, 5))
+```
+
+Structure of MHS
+```{r}
+str(mhs)
+```
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+pandoc.table(head(dcast(mhs, Facility.ID ~ Measure.ID, value.var="Score"),5))
+```
+
+```{r}
+
+mhs_pivot <- dcast(mhs, Facility.ID ~ Measure.ID, value.var="Score")
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+mhs_pivot[ mhs_pivot == "Not Available" ] <- NA
+mhs_pivot[ mhs_pivot == "Not Applicable"] <- NA
+
+#sapply(mhs_pivot, function(x) (sum(is.na(x))*100)/nrow(mhs_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+mhs_pivot[,-c(1)] <- sapply(mhs_pivot[,-c(1)],as.numeric)
+
+mhs_pivot1 <- impute(mhs_pivot, method = "median/mode")
+```
+
+
+Here we find the total average score for MHS measures
+```{r}
+mhs_pivot1$'MHS - Avg Score' <- mhs_pivot1$MSPB.1
+
+pandoc.table(head(mhs_pivot1,5))
+```
+
+Merge MHS with HGI to provide hospital's general info to MHS
+```{r}
+mhs_pivot2 <- merge(mhs_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(mhs_pivot2,5))
+```
+
+Generate Aggregate table for MHS by Hospital overall rating
+```{r}
+mhs_agg <- aggregate(mhs_pivot2[,2:3], list(Hospital.overall.rating = mhs_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(mhs_agg,5))
+```
+
+Generate unique measure id and measure name table for MHS
+```{r}
+
+mhs_uni <- mhs[!duplicated(t(apply(mhs[,c(9,10)], 1, sort))),][,c(9,10)]
+pandoc.table(mhs_uni)
+```
+
+# Healthcare_Associated_Infections
+
+```{r}
+# Import data from .CSV file
+hai <- read.csv('Healthcare_Associated_Infections-Hospital.csv')
+#head(tec)
+pandoc.table(head(hai, 5))
+```
+
+Structure of HAI
+```{r}
+str(hai)
+```
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+pandoc.table(head(dcast(hai, Facility.ID ~ Measure.ID, value.var="Score"),5))
+```
+
+
+```{r}
+
+hai_pivot <- dcast(hai, Facility.ID ~ Measure.ID, value.var="Score")
+
+#removing measure that are not important and can be represented SIR
+hai_pivot <- hai_pivot %>% select(-contains("_NUMERATOR"))
+hai_pivot <- hai_pivot %>% select(-contains("_ELIGCASES"))
+hai_pivot <- hai_pivot %>% select(-contains("_DOPC"))
+hai_pivot <- hai_pivot %>% select(-contains("_CIUPPER"))
+hai_pivot <- hai_pivot %>% select(-contains("_CILOWER"))
+
+
+
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+hai_pivot[ hai_pivot == "Not Available" ] <- NA
+hai_pivot[ hai_pivot == "Not Applicable"] <- NA
+
+#sapply(hai_pivot, function(x) (sum(is.na(x))*100)/nrow(hai_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+hai_pivot[,-c(1)] <- sapply(hai_pivot[,-c(1)],as.numeric)
+
+pandoc.table(head(hai_pivot,5))
+
+hai_pivot1 <- impute(hai_pivot, method = "median/mode")
+```
+
+```{r}
+#hai_pivot1[,2:7] <- sapply(hai_pivot1[,2:7], FUN = normalize)
+```
+
+Here we find the total average score for HAI measures
+```{r}
+hai_pivot1$'HAI - Avg Score' <- rowSums( hai_pivot1[,2:7] )/ ncol(hai_pivot1[,2:7])
+
+pandoc.table(head(hai_pivot1,5))
+```
+
+Merge HAI with HGI to provide hospital's general info to HAI
+```{r}
+hai_pivot2 <- merge(hai_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(hai_pivot2,5))
+```
+
+Generate Aggregate table for HAI by Hospital overall rating
+```{r}
+hai_agg <- aggregate(hai_pivot2[,2:8], list(Hospital.overall.rating = hai_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(hai_agg,5))
+```
+
+Generate unique measure id and measure name table for HAI
+```{r}
+
+hai_uni <- hai[!duplicated(t(apply(hai[,c(9,10)], 1, sort))),][,c(9,10)]
+
+#we remove these cause they are not important
+hai_uni <- hai_uni[!grepl("_CILOWER", hai_uni$Measure.ID),]
+hai_uni <- hai_uni[!grepl("_CIUPPER", hai_uni$Measure.ID),]
+hai_uni <- hai_uni[!grepl("_DOPC", hai_uni$Measure.ID),]
+hai_uni <- hai_uni[!grepl("_ELIGCASES", hai_uni$Measure.ID),]
+hai_uni <- hai_uni[!grepl("_NUMERATOR", hai_uni$Measure.ID),]
+
+pandoc.table(hai_uni)
+```
+
+
+# HCAHPS
+
+```{r}
+# Import data from .CSV file
+hcahps <- read.csv('HCAHPS-Hospital.csv')
+#head(tec)
+pandoc.table(head(hcahps, 5))
+```
+
+Structure of HCAHPS
+```{r}
+str(hcahps)
+```
+
+```{r}
+
+#pandoc.table(head(dcast(hcahps, Facility.ID ~ HCAHPS.Measure.ID, value.var="Patient.Survey.Star.Rating"),5))
+```
+
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+hcahps_pivot <- dcast(hcahps, Facility.ID ~ HCAHPS.Measure.ID, value.var="Patient.Survey.Star.Rating")
+
+#removing measure that are not important and can be represented Final measure for it
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_p"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_D"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_LINEAR_SCORE"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_A"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_SA"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_0_6"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_7_8"))
+hcahps_pivot <- hcahps_pivot %>% select(-contains("_9_10"))
+
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+hcahps_pivot[ hcahps_pivot == "Not Available" ] <- NA
+hcahps_pivot[ hcahps_pivot == "Not Applicable"] <- NA
+
+#sapply(hcahps_pivot, function(x) (sum(is.na(x))*100)/nrow(hcahps_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+hcahps_pivot[,-c(1)] <- sapply(hcahps_pivot[,-c(1)],as.numeric)
+
+pandoc.table(head(hcahps_pivot,5))
+
+hcahps_pivot1 <- impute(hcahps_pivot, method = "median/mode")
+```
+
+Here we find the total average score for HCAHPS measures
+```{r}
+hcahps_pivot1$'HCAHPS - Avg Score' <- rowSums( hcahps_pivot1[,2:12] )/ ncol(hcahps_pivot1[,2:12])
+
+pandoc.table(head(hcahps_pivot1,5))
+```
+
+Merge HCAHPS with HGI to provide hospital's general info to HCAHPS
+```{r}
+hcahps_pivot2 <- merge(hcahps_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(hcahps_pivot2,5))
+```
+
+Generate Aggregate table for HCAHPS by Hospital overall rating
+```{r}
+hcahps_agg <- aggregate(hcahps_pivot2[,2:13], list(Hospital.overall.rating = hcahps_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(hcahps_agg,5))
+```
+
+Generate unique measure id and measure name table for HCAHPS
+```{r}
+
+hcahps_uni <- hcahps[!duplicated(t(apply(hcahps[,c(9,10)], 1, sort))),][,c(9,10)]
+
+# removing the unwanted columns from data
+hcahps_uni <- hcahps_uni[!grepl("_P", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_D", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_A", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_SA", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_LINEAR_SCORE", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_0_6", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_7_8", hcahps_uni$HCAHPS.Measure.ID),]
+hcahps_uni <- hcahps_uni[!grepl("_9_10", hcahps_uni$HCAHPS.Measure.ID),]
+
+pandoc.table(hcahps_uni)
+```
+
+
+
+# Complications_and_Deaths
+
+```{r}
+# Import data from .CSV file
+cad <- read.csv('Complications_and_Deaths-Hospital.csv')
+#head(tec)
+pandoc.table(head(cad, 5))
+```
+
+Structure of CAD
+```{r}
+str(cad)
+```
+
+this will generate a pivot table between Facility id and measure id
+```{r}
+
+cad_pivot <- dcast(cad, Facility.ID ~ Measure.ID, value.var="Score")
+
+```
+
+Converting missing values to NA for better imputation process
+the not applicable part should not be NA 
+but for simplification we have taken this decision
+```{r}
+cad_pivot[ cad_pivot == "Not Available" ] <- NA
+cad_pivot[ cad_pivot == "Not Applicable"] <- NA
+
+#sapply(cad_pivot, function(x) (sum(is.na(x))*100)/nrow(cad_pivot) )
+```
+
+Impute  missing data with median/ mode
+```{r}
+
+cad_pivot[,-c(1)] <- sapply(cad_pivot[,-c(1)],as.numeric)
+
+pandoc.table(head(cad_pivot,5))
+
+cad_pivot1 <- impute(cad_pivot, method = "median/mode")
+```
+
+Here we find the total average score for CAD measures
+```{r}
+cad_pivot1$'CAD - Avg Score' <- rowSums( cad_pivot1[,2:20] )/ncol(cad_pivot1[,2:20])
+
+pandoc.table(head(cad_pivot1,5))
+```
+
+Merge CAD with HGI to provide hospital's general info to CAD
+```{r}
+cad_pivot2 <- merge(cad_pivot1, hgi[,c(1,12)], by.x="Facility.ID", by.y="Facility.ID")
+
+pandoc.table(head(cad_pivot2,5))
+```
+
+Generate Aggregate table for CAD by Hospital overall rating
+```{r}
+cad_agg <- aggregate(cad_pivot2[,2:21], list(Hospital.overall.rating = cad_pivot2$Hospital.overall.rating), mean)
+
+pandoc.table(head(cad_agg,5))
+```
+
+Generate unique measure id and measure name table for CAD
+```{r}
+
+cad_uni <- cad[!duplicated(t(apply(cad[,c(9,10)], 1, sort))),][,c(9,10)]
+
+pandoc.table(cad_uni)
+```
+
+
+
+
+
+
+# hospital rating wise
+
+Creating a final data set by merging all the aggregate data of each measure  
+this way we get mean values of all attributes in each measure for each hospital star rating
+```{r}
+
+Star_Rating_final <- merge(cad_agg, hai_agg, by.x="Hospital.overall.rating", by.y="Hospital.overall.rating")
+
+Star_Rating_final <- merge(Star_Rating_final, Reduce(function(x,y) merge(x = x, y = y, by = "Hospital.overall.rating"), 
+       list(hcahps_agg, mhs_agg, oie_agg, pvc_agg, tec_agg)), by.x="Hospital.overall.rating", by.y="Hospital.overall.rating")
+
+```
+
+Here we take only the total average scores for each of the Seven measures for each star rating
+```{r}
+
+Star_Rating_final_general <- Star_Rating_final %>% select(contains(c("Hospital.overall.rating","Avg Score")))
+pandoc.table(head(Star_Rating_final_general))
+```
+
+# hospital wise
+
+
+Here we merge all the 7 measure group by facility.ID
+this holds 67 attributes (from all 7 measures) for each hospital
+```{r}
+final <- merge(hgi,cad_pivot1, by.x="Facility.ID", by.y="Facility.ID")
+
+final <- merge(final, Reduce(function(x,y) merge(x = x, y = y, by = "Facility.ID"), 
+       list(hai_pivot1,hcahps_pivot1, mhs_pivot1, oie_pivot1, pvc_pivot1, tec_pivot1)), by.x="Facility.ID", by.y="Facility.ID")
+
+```
+
+
+
+Here we take only the total average scores for each of the seven measures for each hospital
+```{r}
+
+final <- impute(final, method = "median/mode")
+
+final_general <- final %>% select(contains(c("Facility.ID","Score")))
+
+final_general <- merge(hgi,final_general, by.x="Facility.ID", by.y="Facility.ID")
+
+final_general <- impute(final_general, method = "median/mode")
+
+pandoc.table(head(final_general))
+
+```
+
+Scaling up/down the data to bring all measures under similar range for better mapping and plotting.
+done for both general data sets
+```{r}
+#final_general[,c(13:19)] <- sapply(final_general[,c(13:19)], FUN = normalize)
+
+final_general[,c(13)] <- final_general[,c(13)]*50
+final_general[,c(14)] <- final_general[,c(14)]*1000
+final_general[,c(15)] <- final_general[,c(15)]*200
+final_general[,c(16)] <- final_general[,c(16)]*500
+final_general[,c(17)] <- final_general[,c(17)]*50
+final_general[,c(18)] <- final_general[,c(18)]*(3/100)
+final_general[,c(19)] <- final_general[,c(19)]*10
+
+
+```
+
+```{r}
+Star_Rating_final_general1 <- Star_Rating_final_general
+
+#Star_Rating_final_general1[,c(2:8)] <- sapply(Star_Rating_final_general1[,c(2:8)], FUN = normalize)
+
+Star_Rating_final_general1[,c(2)] <- Star_Rating_final_general1[,c(2)]*(100/2)
+Star_Rating_final_general1[,c(3)] <- Star_Rating_final_general1[,c(3)]*10*100
+Star_Rating_final_general1[,c(4)] <- Star_Rating_final_general1[,c(4)]*2*100
+Star_Rating_final_general1[,c(5)] <- Star_Rating_final_general1[,c(5)]*5*100
+Star_Rating_final_general1[,c(6)] <- Star_Rating_final_general1[,c(6)]*(100/2)
+Star_Rating_final_general1[,c(7)] <- Star_Rating_final_general1[,c(7)]*(3/100)
+Star_Rating_final_general1[,c(8)] <- Star_Rating_final_general1[,c(8)]*10
+
+```
+
+
+
+Here we export all the data as .CSV file to to be used by the Shiny R application we made
+```{r}
+write.csv(final,"final.csv", row.names = TRUE)
+write.csv(final_general,"final_general.csv", row.names = TRUE)
+write.csv(Star_Rating_final,"Star_Rating_final.csv", row.names = TRUE)
+write.csv(Star_Rating_final_general1,"Star_Rating_final_general.csv", row.names = TRUE)
+```
+
+
+```{r}
+write.csv(cad_pivot1,"cad_p.csv",row.names = FALSE)
+write.csv(hai_pivot1,"hai_p.csv",row.names = FALSE)
+write.csv(hcahps_pivot1,"hcahps_p.csv",row.names = FALSE)
+write.csv(mhs_pivot1,"mhs_p.csv",row.names = FALSE)
+write.csv(oie_pivot1,"oie_p.csv",row.names = FALSE)
+write.csv(pvc_pivot1,"pvc_p.csv",row.names = FALSE)
+write.csv(tec_pivot1,"tec_p.csv",row.names = FALSE)
+
+```
+
+```{r}
+write.csv(cad_uni,"cad_u.csv",row.names = FALSE)
+write.csv(hai_uni,"hai_u.csv",row.names = FALSE)
+write.csv(hcahps_uni,"hcahps_u.csv",row.names = FALSE)
+write.csv(mhs_uni,"mhs_u.csv",row.names = FALSE)
+write.csv(oie_uni,"oie_u.csv",row.names = FALSE)
+write.csv(pvc_uni,"pvc_u.csv",row.names = FALSE)
+write.csv(tec_uni,"tec_u.csv",row.names = FALSE)
+```
+
+```{r}
+write.csv(cad_agg,"cad_a.csv",row.names = FALSE)
+write.csv(hai_agg,"hai_a.csv",row.names = FALSE)
+write.csv(hcahps_agg,"hcahps_a.csv",row.names = FALSE)
+write.csv(mhs_agg,"mhs_a.csv",row.names = FALSE)
+write.csv(oie_agg,"oie_a.csv",row.names = FALSE)
+write.csv(pvc_agg,"pvc_a.csv",row.names = FALSE)
+write.csv(tec_agg,"tec_a.csv",row.names = FALSE)
+```
+
+
+END
